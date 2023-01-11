@@ -1,6 +1,9 @@
 /*
-Version: 0.0.1
-
+Version: 0.0.2
+Devide code to two files:
+gwalk2.go - main and http server for snmpwalk
+snmppidsfile.go - snmpwalker , snmpbulkget
+/dbmap/dbmap.go - structs  for tdb
 
 
 */
@@ -8,101 +11,50 @@ Version: 0.0.1
 package main
 
 import (
-	"bufio"
 	"errors"
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
-	"time"
 
-	"github.com/gosnmp/gosnmp"
+	"github.com/go-echarts/go-echarts/v2/charts"
+	"github.com/go-echarts/go-echarts/v2/opts"
+	"github.com/go-echarts/go-echarts/v2/types"
 )
 
-// Struct for snmp walking from file
-type OIDSFile struct {
-	file      string
-	oids      []string
-	target    string
-	community string
-}
+func httpserver(w http.ResponseWriter, _ *http.Request) {
+	dd := d
+	namex := make([]string, 0, len(dd.Oiddata))
+	namey := make([]opts.LineData, 0, len(dd.Oiddata))
+	for k, v := range dd.Oiddata {
+		namex = append(namex, k.Format("2006-1-2 15:4:5"))
+		namey = append(namey, opts.LineData{Value: fmt.Sprintf("%v", v.Value)})
 
-// Func creates slice of OID from snmp file
-func (o OIDSFile) GettingOIDS() ([]string, error) {
-	var toids []string
-	f, err := os.Open(o.file)
-
-	if err != nil {
-		log.Println("The problem with openning file", err)
-		return nil, err
-	}
-	defer f.Close()
-	scanner := bufio.NewScanner(f)
-
-	for scanner.Scan() {
-		//		log.Println("OIDS", scanner.Text())
-		toids = append(toids, scanner.Text())
 	}
 
-	return toids, nil
+	line := charts.NewLine()
+	// set some global options like Title/Legend/ToolTip or anything else
+	line.SetGlobalOptions(
+		charts.WithInitializationOpts(opts.Initialization{Theme: types.ThemeWesteros}),
+		charts.WithTitleOpts(opts.Title{
+			Title:    "MP CPU Loading",
+			Subtitle: "Line chart rendered by the http server this time",
+		}))
 
-}
+	// Put data into instance
+	line.SetXAxis(namex).
+		AddSeries("SNMP oid ", namey).
+		SetSeriesOptions(charts.WithLineChartOpts(opts.LineChart{Smooth: true}))
+	line.Render(w)
 
-// Func prints result of snmpwaling by oid , it gets from gosnmp example
-func (o OIDSFile) printValue(pdu gosnmp.SnmpPDU) error {
-	fmt.Printf("%s = ", pdu.Name)
-
-	switch pdu.Type {
-	case gosnmp.OctetString:
-		b := pdu.Value.([]byte)
-		fmt.Printf("STRING: %s\n", string(b))
-	default:
-		fmt.Printf("TYPE %d: %d\n", pdu.Type, gosnmp.ToBigInt(pdu.Value))
-	}
-	return nil
-}
-
-// Func gets result from SNMPwalk by oid, main parts from gosnmp
-func (o OIDSFile) SNMPWalker(oid string) error {
-
-	gosnmp.Default.Target = o.target
-	gosnmp.Default.Community = o.community
-	gosnmp.Default.Timeout = time.Duration(10 * time.Second) // Timeout better suited to walking
-	err := gosnmp.Default.Connect()
-	if err != nil {
-		fmt.Printf("Connect err: %v\n", err)
-		return err
-	}
-	defer gosnmp.Default.Conn.Close()
-
-	err = gosnmp.Default.BulkWalk(oid, o.printValue)
-	if err != nil {
-		fmt.Printf("Walk Error: %v\n", err)
-		return err
-	}
-	return nil
-}
-
-// Func strats inifinite loops and snmpwpooling oids from the slice
-func (o OIDSFile) StartSNMPWalker(interval int) error {
-	for {
-		for index, oid := range o.oids {
-			log.Println("Current Index", index, "OID", oid)
-			err := o.SNMPWalker(oid)
-			if err != nil {
-				log.Printf("Error in OID", oid, "and error", err)
-				return err
-			}
-		}
-		time.Sleep(time.Duration(interval) * time.Second)
-	}
-	return nil
 }
 
 func main() {
 	flag.Usage = func() {
 		fmt.Printf("Usage:\n")
+		fmt.Printf("Version 0.0.1\n")
 		fmt.Printf("   %s [-community=<community>] host \n", filepath.Base(os.Args[0]))
 		fmt.Printf("     host      - the host to walk/scan\n")
 		fmt.Printf("     oid       - the MIB/Oid defining a subtree of values\n\n")
@@ -111,9 +63,11 @@ func main() {
 
 	var community, snmpfile string
 	var interval int
+	var walk string
 	flag.StringVar(&community, "community", "public", "the community string for device")
-	flag.IntVar(&interval, "interval", 60, "Interval in seconds")
+	flag.IntVar(&interval, "interval", 0, "Interval in seconds")
 	flag.StringVar(&snmpfile, "file", "snmp2.mibs", "File in Mibs")
+	flag.StringVar(&walk, "walk", "yes", "Choose Walk or Bulk")
 
 	flag.Parse()
 
@@ -124,6 +78,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	http.HandleFunc("/", httpserver)
+	go http.ListenAndServe(":8081", nil)
 
 	oidsFromFile.oids = make([]string, len(toids))
 	co := copy(oidsFromFile.oids, toids)
@@ -136,10 +93,16 @@ func main() {
 	}
 	oidsFromFile.target = flag.Args()[0]
 	oidsFromFile.community = community
+	if walk == "yes" {
+		err = oidsFromFile.StartSNMPWalker(interval)
+		if err != nil {
+			log.Fatal(err)
+		}
+	} else {
+		err = oidsFromFile.GetSNMPBulk(interval)
 
-	err = oidsFromFile.StartSNMPWalker(interval)
-	if err != nil {
-		log.Fatal(err)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
-
 }
