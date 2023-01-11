@@ -54,7 +54,7 @@ func httpserver(w http.ResponseWriter, _ *http.Request) {
 func main() {
 	flag.Usage = func() {
 		fmt.Printf("Usage:\n")
-		fmt.Printf("Version 0.0.1\n")
+		fmt.Printf("Version 0.0.2\n")
 		fmt.Printf("   %s [-community=<community>] host \n", filepath.Base(os.Args[0]))
 		fmt.Printf("     host      - the host to walk/scan\n")
 		fmt.Printf("     oid       - the MIB/Oid defining a subtree of values\n\n")
