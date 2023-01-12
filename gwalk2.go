@@ -1,10 +1,10 @@
 /*
-Version: 0.0.2
+Version: 0.0.3
 Devide code to two files:
 gwalk2.go - main and http server for snmpwalk
 snmppidsfile.go - snmpwalker , snmpbulkget
 /dbmap/dbmap.go - structs  for tdb
-
+/logger/logger.go - for logging messages
 
 */
 
@@ -14,39 +14,79 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"gwalk2byoids/logger"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
+	"time"
 
 	"github.com/go-echarts/go-echarts/v2/charts"
 	"github.com/go-echarts/go-echarts/v2/opts"
 	"github.com/go-echarts/go-echarts/v2/types"
 )
 
+var loglevel logger.Logstruct
+
 func httpserver(w http.ResponseWriter, _ *http.Request) {
 	dd := d
+	namext := make([]time.Time, 0, len(dd.Oiddata))
 	namex := make([]string, 0, len(dd.Oiddata))
 	namey := make([]opts.LineData, 0, len(dd.Oiddata))
-	for k, v := range dd.Oiddata {
-		namex = append(namex, k.Format("2006-1-2 15:4:5"))
-		namey = append(namey, opts.LineData{Value: fmt.Sprintf("%v", v.Value)})
+	//namey := make([]opts.KlineData, 0, len(dd.Oiddata))
+
+	for k := range dd.Oiddata {
+		namext = append(namext, k)
 
 	}
 
+	loglevel.Logger("Before", namext)
+	sort.Slice(namext, func(i, j int) bool { return namext[i].Before(namext[j]) })
+
+	loglevel.Logger("After", namext)
+	for _, v := range namext {
+
+		//	namex = append(namex, namext[i].Format("2006-1-2 15:4:5"))
+		namex = append(namex, v.Format("2006-01-02 15:04:05"))
+		namey = append(namey, opts.LineData{Value: fmt.Sprintf("%v", dd.Oiddata[v].Value)})
+		//namey = append(namey, opts.KlineData{Value: fmt.Sprintf("%v", dd.Oiddata[v].Value)})
+	}
+
 	line := charts.NewLine()
-	// set some global options like Title/Legend/ToolTip or anything else
+
 	line.SetGlobalOptions(
 		charts.WithInitializationOpts(opts.Initialization{Theme: types.ThemeWesteros}),
 		charts.WithTitleOpts(opts.Title{
-			Title:    "MP CPU Loading",
-			Subtitle: "Line chart rendered by the http server this time",
-		}))
+			Title: "MP CPU Loading",
+			//	Subtitle: "SSS" + namext[0].Format("2006-1-2 15:4:5") + "BBB",
+		}),
+
+		charts.WithXAxisOpts(opts.XAxis{
+			SplitNumber: 20,
+		}),
+		charts.WithYAxisOpts(opts.YAxis{
+			Scale: true,
+		}),
+		charts.WithDataZoomOpts(opts.DataZoom{
+			Type:       "inside",
+			Start:      50,
+			End:        100,
+			XAxisIndex: []int{0},
+		}),
+		charts.WithDataZoomOpts(opts.DataZoom{
+			Type:       "slider",
+			Start:      50,
+			End:        100,
+			XAxisIndex: []int{0},
+		}),
+	)
 
 	// Put data into instance
 	line.SetXAxis(namex).
-		AddSeries("SNMP oid ", namey).
-		SetSeriesOptions(charts.WithLineChartOpts(opts.LineChart{Smooth: true}))
+		AddSeries("lines", namey)
+		//AddSeries("SNMP oid ", namey).
+		//		SetSeriesOptions(charts.WithLineChartOpts(opts.LineChart{Smooth: true}))
 	line.Render(w)
 
 }
@@ -79,9 +119,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	http.HandleFunc("/", httpserver)
-	go http.ListenAndServe(":8081", nil)
-
 	oidsFromFile.oids = make([]string, len(toids))
 	co := copy(oidsFromFile.oids, toids)
 	if co < 1 {
@@ -94,6 +131,9 @@ func main() {
 	oidsFromFile.target = flag.Args()[0]
 	oidsFromFile.community = community
 	if walk == "yes" {
+		//	loglevel.Loglevel = "DEBUG"
+		http.HandleFunc("/", httpserver)
+		go http.ListenAndServe(":8081", nil)
 		err = oidsFromFile.StartSNMPWalker(interval)
 		if err != nil {
 			log.Fatal(err)
